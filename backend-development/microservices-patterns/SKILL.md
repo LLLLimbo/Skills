@@ -41,7 +41,6 @@ Master microservices architecture patterns including service boundaries, inter-s
 **Synchronous (Request/Response)**
 - REST APIs
 - gRPC
-- GraphQL
 
 **Asynchronous (Events/Messages)**
 - Event streaming (Kafka)
@@ -78,479 +77,741 @@ Master microservices architecture patterns including service boundaries, inter-s
 
 ### Pattern 1: By Business Capability
 
-```python
-# E-commerce example
+```java
+// E-commerce example
 
-# Order Service
-class OrderService:
-    """Handles order lifecycle."""
+// Order Service
+@Service
+public class OrderService {
+    
+    @Autowired
+    private OrderRepository orderRepository;
+    
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+    
+    /**
+     * Handles order lifecycle.
+     */
+    @Transactional
+    public Order createOrder(OrderRequest orderData) {
+        Order order = Order.create(orderData);
+        orderRepository.save(order);
+        
+        // Publish event for other services
+        OrderCreatedEvent event = OrderCreatedEvent.builder()
+            .orderId(order.getId())
+            .customerId(order.getCustomerId())
+            .items(order.getItems())
+            .total(order.getTotal())
+            .build();
+        
+        eventPublisher.publishEvent(event);
+        
+        return order;
+    }
+}
 
-    async def create_order(self, order_data: dict) -> Order:
-        order = Order.create(order_data)
+// Payment Service (separate service)
+@Service
+public class PaymentService {
+    
+    @Autowired
+    private PaymentGateway paymentGateway;
+    
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+    
+    /**
+     * Handles payment processing.
+     */
+    @Transactional
+    public PaymentResult processPayment(PaymentRequest paymentRequest) {
+        // Process payment
+        PaymentResult result = paymentGateway.charge(
+            paymentRequest.getAmount(),
+            paymentRequest.getCustomerId()
+        );
+        
+        if (result.isSuccess()) {
+            PaymentCompletedEvent event = PaymentCompletedEvent.builder()
+                .orderId(paymentRequest.getOrderId())
+                .transactionId(result.getTransactionId())
+                .build();
+            
+            eventPublisher.publishEvent(event);
+        }
+        
+        return result;
+    }
+}
 
-        # Publish event for other services
-        await self.event_bus.publish(
-            OrderCreatedEvent(
-                order_id=order.id,
-                customer_id=order.customer_id,
-                items=order.items,
-                total=order.total
-            )
-        )
-
-        return order
-
-# Payment Service (separate service)
-class PaymentService:
-    """Handles payment processing."""
-
-    async def process_payment(self, payment_request: PaymentRequest) -> PaymentResult:
-        # Process payment
-        result = await self.payment_gateway.charge(
-            amount=payment_request.amount,
-            customer=payment_request.customer_id
-        )
-
-        if result.success:
-            await self.event_bus.publish(
-                PaymentCompletedEvent(
-                    order_id=payment_request.order_id,
-                    transaction_id=result.transaction_id
-                )
-            )
-
-        return result
-
-# Inventory Service (separate service)
-class InventoryService:
-    """Handles inventory management."""
-
-    async def reserve_items(self, order_id: str, items: List[OrderItem]) -> ReservationResult:
-        # Check availability
-        for item in items:
-            available = await self.inventory_repo.get_available(item.product_id)
-            if available < item.quantity:
-                return ReservationResult(
-                    success=False,
-                    error=f"Insufficient inventory for {item.product_id}"
-                )
-
-        # Reserve items
-        reservation = await self.create_reservation(order_id, items)
-
-        await self.event_bus.publish(
-            InventoryReservedEvent(
-                order_id=order_id,
-                reservation_id=reservation.id
-            )
-        )
-
-        return ReservationResult(success=True, reservation=reservation)
+// Inventory Service (separate service)
+@Service
+public class InventoryService {
+    
+    @Autowired
+    private InventoryRepository inventoryRepository;
+    
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+    
+    /**
+     * Handles inventory management.
+     */
+    @Transactional
+    public ReservationResult reserveItems(String orderId, List<OrderItem> items) {
+        // Check availability
+        for (OrderItem item : items) {
+            Integer available = inventoryRepository.getAvailable(item.getProductId());
+            if (available < item.getQuantity()) {
+                return ReservationResult.builder()
+                    .success(false)
+                    .error("Insufficient inventory for " + item.getProductId())
+                    .build();
+            }
+        }
+        
+        // Reserve items
+        Reservation reservation = createReservation(orderId, items);
+        
+        InventoryReservedEvent event = InventoryReservedEvent.builder()
+            .orderId(orderId)
+            .reservationId(reservation.getId())
+            .build();
+        
+        eventPublisher.publishEvent(event);
+        
+        return ReservationResult.builder()
+            .success(true)
+            .reservation(reservation)
+            .build();
+    }
+}
 ```
 
 ### Pattern 2: API Gateway
 
-```python
-from fastapi import FastAPI, HTTPException, Depends
-import httpx
-from circuitbreaker import circuit
+```java
+@RestController
+@RequestMapping("/api")
+public class APIGatewayController {
+    
+    @Autowired
+    private OrderServiceClient orderServiceClient;
+    
+    @Autowired
+    private PaymentServiceClient paymentServiceClient;
+    
+    @Autowired
+    private InventoryServiceClient inventoryServiceClient;
+    
+    /**
+     * API Gateway endpoint for creating orders.
+     */
+    @PostMapping("/orders")
+    public ResponseEntity<Map<String, Object>> createOrder(@RequestBody OrderRequest orderData) {
+        try {
+            // Route to order service
+            Order order = orderServiceClient.createOrder(orderData);
+            return ResponseEntity.ok(Map.of("order", order));
+        } catch (FeignException e) {
+            throw new ServiceUnavailableException("Order service unavailable");
+        }
+    }
+    
+    /**
+     * Aggregate data from multiple services.
+     */
+    @GetMapping("/orders/{orderId}/aggregate")
+    public ResponseEntity<Map<String, Object>> getOrderAggregate(@PathVariable String orderId) {
+        Map<String, Object> result = new HashMap<>();
+        
+        // Parallel requests using CompletableFuture
+        CompletableFuture<Order> orderFuture = CompletableFuture
+            .supplyAsync(() -> orderServiceClient.getOrder(orderId));
+        
+        CompletableFuture<Payment> paymentFuture = CompletableFuture
+            .supplyAsync(() -> paymentServiceClient.getPaymentByOrderId(orderId))
+            .exceptionally(ex -> null);
+        
+        CompletableFuture<Reservation> inventoryFuture = CompletableFuture
+            .supplyAsync(() -> inventoryServiceClient.getReservationByOrderId(orderId))
+            .exceptionally(ex -> null);
+        
+        // Wait for all futures
+        CompletableFuture.allOf(orderFuture, paymentFuture, inventoryFuture).join();
+        
+        // Handle partial failures
+        result.put("order", orderFuture.join());
+        if (paymentFuture.join() != null) {
+            result.put("payment", paymentFuture.join());
+        }
+        if (inventoryFuture.join() != null) {
+            result.put("inventory", inventoryFuture.join());
+        }
+        
+        return ResponseEntity.ok(result);
+    }
+}
 
-app = FastAPI()
-
-class APIGateway:
-    """Central entry point for all client requests."""
-
-    def __init__(self):
-        self.order_service_url = "http://order-service:8000"
-        self.payment_service_url = "http://payment-service:8001"
-        self.inventory_service_url = "http://inventory-service:8002"
-        self.http_client = httpx.AsyncClient(timeout=5.0)
-
-    @circuit(failure_threshold=5, recovery_timeout=30)
-    async def call_order_service(self, path: str, method: str = "GET", **kwargs):
-        """Call order service with circuit breaker."""
-        response = await self.http_client.request(
-            method,
-            f"{self.order_service_url}{path}",
-            **kwargs
-        )
-        response.raise_for_status()
-        return response.json()
-
-    async def create_order_aggregate(self, order_id: str) -> dict:
-        """Aggregate data from multiple services."""
-        # Parallel requests
-        order, payment, inventory = await asyncio.gather(
-            self.call_order_service(f"/orders/{order_id}"),
-            self.call_payment_service(f"/payments/order/{order_id}"),
-            self.call_inventory_service(f"/reservations/order/{order_id}"),
-            return_exceptions=True
-        )
-
-        # Handle partial failures
-        result = {"order": order}
-        if not isinstance(payment, Exception):
-            result["payment"] = payment
-        if not isinstance(inventory, Exception):
-            result["inventory"] = inventory
-
-        return result
-
-@app.post("/api/orders")
-async def create_order(
-    order_data: dict,
-    gateway: APIGateway = Depends()
-):
-    """API Gateway endpoint."""
-    try:
-        # Route to order service
-        order = await gateway.call_order_service(
-            "/orders",
-            method="POST",
-            json=order_data
-        )
-        return {"order": order}
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=503, detail="Order service unavailable")
+/**
+ * Feign client for Order Service with circuit breaker.
+ */
+@FeignClient(name = "order-service", url = "http://order-service:8000")
+public interface OrderServiceClient {
+    
+    @CircuitBreaker(name = "orderService", fallbackMethod = "createOrderFallback")
+    @PostMapping("/orders")
+    Order createOrder(@RequestBody OrderRequest orderData);
+    
+    @CircuitBreaker(name = "orderService", fallbackMethod = "getOrderFallback")
+    @GetMapping("/orders/{orderId}")
+    Order getOrder(@PathVariable String orderId);
+    
+    default Order createOrderFallback(OrderRequest orderData, Exception ex) {
+        throw new ServiceUnavailableException("Order service unavailable");
+    }
+    
+    default Order getOrderFallback(String orderId, Exception ex) {
+        return null;
+    }
+}
 ```
 
 ## Communication Patterns
 
 ### Pattern 1: Synchronous REST Communication
 
-```python
-# Service A calls Service B
-import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
-
-class ServiceClient:
-    """HTTP client with retries and timeout."""
-
-    def __init__(self, base_url: str):
-        self.base_url = base_url
-        self.client = httpx.AsyncClient(
-            timeout=httpx.Timeout(5.0, connect=2.0),
-            limits=httpx.Limits(max_keepalive_connections=20)
-        )
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
+```java
+// Service A calls Service B
+@Component
+public class ServiceClient {
+    
+    private final RestTemplate restTemplate;
+    private final String baseUrl;
+    
+    /**
+     * HTTP client with retries and timeout.
+     */
+    public ServiceClient(@Value("${service.base-url}") String baseUrl) {
+        this.baseUrl = baseUrl;
+        
+        // Configure RestTemplate with timeout
+        HttpComponentsClientHttpRequestFactory factory = 
+            new HttpComponentsClientHttpRequestFactory();
+        factory.setConnectTimeout(2000);
+        factory.setReadTimeout(5000);
+        
+        this.restTemplate = new RestTemplate(factory);
+    }
+    
+    /**
+     * GET with automatic retries.
+     */
+    @Retryable(
+        value = {RestClientException.class},
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 2000, multiplier = 2, maxDelay = 10000)
     )
-    async def get(self, path: str, **kwargs):
-        """GET with automatic retries."""
-        response = await self.client.get(f"{self.base_url}{path}", **kwargs)
-        response.raise_for_status()
-        return response.json()
+    public <T> T get(String path, Class<T> responseType) {
+        String url = baseUrl + path;
+        ResponseEntity<T> response = restTemplate.getForEntity(url, responseType);
+        
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw new RestClientException("Request failed with status: " + response.getStatusCode());
+        }
+        
+        return response.getBody();
+    }
+    
+    /**
+     * POST request.
+     */
+    @Retryable(
+        value = {RestClientException.class},
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 2000, multiplier = 2, maxDelay = 10000)
+    )
+    public <T, R> R post(String path, T requestBody, Class<R> responseType) {
+        String url = baseUrl + path;
+        ResponseEntity<R> response = restTemplate.postForEntity(url, requestBody, responseType);
+        
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw new RestClientException("Request failed with status: " + response.getStatusCode());
+        }
+        
+        return response.getBody();
+    }
+}
 
-    async def post(self, path: str, **kwargs):
-        """POST request."""
-        response = await self.client.post(f"{self.base_url}{path}", **kwargs)
-        response.raise_for_status()
-        return response.json()
-
-# Usage
-payment_client = ServiceClient("http://payment-service:8001")
-result = await payment_client.post("/payments", json=payment_data)
+// Usage
+@Service
+public class OrderService {
+    
+    @Autowired
+    private ServiceClient paymentClient;
+    
+    public PaymentResult processOrder(PaymentRequest paymentData) {
+        return paymentClient.post("/payments", paymentData, PaymentResult.class);
+    }
+}
 ```
 
 ### Pattern 2: Asynchronous Event-Driven
 
-```python
-# Event-driven communication with Kafka
-from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
-import json
-from dataclasses import dataclass, asdict
-from datetime import datetime
+```java
+// Event-driven communication with Kafka
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class DomainEvent {
+    private String eventId;
+    private String eventType;
+    private String aggregateId;
+    private LocalDateTime occurredAt;
+    private Map<String, Object> data;
+}
 
-@dataclass
-class DomainEvent:
-    event_id: str
-    event_type: str
-    aggregate_id: str
-    occurred_at: datetime
-    data: dict
+@Service
+public class EventBus {
+    
+    @Autowired
+    private KafkaTemplate<String, DomainEvent> kafkaTemplate;
+    
+    /**
+     * Publish event to Kafka topic.
+     */
+    public void publish(DomainEvent event) {
+        String topic = event.getEventType();
+        
+        kafkaTemplate.send(topic, event.getAggregateId(), event)
+            .addCallback(
+                result -> System.out.println("Event published: " + event.getEventId()),
+                ex -> System.err.println("Failed to publish event: " + ex.getMessage())
+            );
+    }
+}
 
-class EventBus:
-    """Event publishing and subscription."""
+@Configuration
+public class KafkaProducerConfig {
+    
+    @Value("${spring.kafka.bootstrap-servers}")
+    private String bootstrapServers;
+    
+    @Bean
+    public ProducerFactory<String, DomainEvent> producerFactory() {
+        Map<String, Object> config = new HashMap<>();
+        config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        return new DefaultKafkaProducerFactory<>(config);
+    }
+    
+    @Bean
+    public KafkaTemplate<String, DomainEvent> kafkaTemplate() {
+        return new KafkaTemplate<>(producerFactory());
+    }
+}
 
-    def __init__(self, bootstrap_servers: List[str]):
-        self.bootstrap_servers = bootstrap_servers
-        self.producer = None
+// Order Service publishes event
+@Service
+public class OrderService {
+    
+    @Autowired
+    private OrderRepository orderRepository;
+    
+    @Autowired
+    private EventBus eventBus;
+    
+    @Transactional
+    public Order createOrder(OrderRequest orderData) {
+        Order order = saveOrder(orderData);
+        
+        DomainEvent event = DomainEvent.builder()
+            .eventId(UUID.randomUUID().toString())
+            .eventType("OrderCreated")
+            .aggregateId(order.getId())
+            .occurredAt(LocalDateTime.now())
+            .data(Map.of(
+                "order_id", order.getId(),
+                "customer_id", order.getCustomerId(),
+                "total", order.getTotal()
+            ))
+            .build();
+        
+        eventBus.publish(event);
+        
+        return order;
+    }
+}
 
-    async def start(self):
-        self.producer = AIOKafkaProducer(
-            bootstrap_servers=self.bootstrap_servers,
-            value_serializer=lambda v: json.dumps(v).encode()
-        )
-        await self.producer.start()
+// Inventory Service listens for OrderCreated
+@Service
+public class InventoryEventListener {
+    
+    @Autowired
+    private InventoryService inventoryService;
+    
+    /**
+     * React to order creation.
+     */
+    @KafkaListener(topics = "OrderCreated", groupId = "inventory-service")
+    public void handleOrderCreated(DomainEvent event) {
+        Map<String, Object> data = event.getData();
+        String orderId = (String) data.get("order_id");
+        List<OrderItem> items = (List<OrderItem>) data.get("items");
+        
+        // Reserve inventory
+        inventoryService.reserveInventory(orderId, items);
+    }
+}
 
-    async def publish(self, event: DomainEvent):
-        """Publish event to Kafka topic."""
-        topic = event.event_type
-        await self.producer.send_and_wait(
-            topic,
-            value=asdict(event),
-            key=event.aggregate_id.encode()
-        )
-
-    async def subscribe(self, topic: str, handler: callable):
-        """Subscribe to events."""
-        consumer = AIOKafkaConsumer(
-            topic,
-            bootstrap_servers=self.bootstrap_servers,
-            value_deserializer=lambda v: json.loads(v.decode()),
-            group_id="my-service"
-        )
-        await consumer.start()
-
-        try:
-            async for message in consumer:
-                event_data = message.value
-                await handler(event_data)
-        finally:
-            await consumer.stop()
-
-# Order Service publishes event
-async def create_order(order_data: dict):
-    order = await save_order(order_data)
-
-    event = DomainEvent(
-        event_id=str(uuid.uuid4()),
-        event_type="OrderCreated",
-        aggregate_id=order.id,
-        occurred_at=datetime.now(),
-        data={
-            "order_id": order.id,
-            "customer_id": order.customer_id,
-            "total": order.total
-        }
-    )
-
-    await event_bus.publish(event)
-
-# Inventory Service listens for OrderCreated
-async def handle_order_created(event_data: dict):
-    """React to order creation."""
-    order_id = event_data["data"]["order_id"]
-    items = event_data["data"]["items"]
-
-    # Reserve inventory
-    await reserve_inventory(order_id, items)
+@Configuration
+public class KafkaConsumerConfig {
+    
+    @Value("${spring.kafka.bootstrap-servers}")
+    private String bootstrapServers;
+    
+    @Bean
+    public ConsumerFactory<String, DomainEvent> consumerFactory() {
+        Map<String, Object> config = new HashMap<>();
+        config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+        config.put(JsonDeserializer.TRUSTED_PACKAGES, "*");
+        return new DefaultKafkaConsumerFactory<>(config);
+    }
+    
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, DomainEvent> kafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, DomainEvent> factory = 
+            new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory());
+        return factory;
+    }
+}
 ```
 
 ### Pattern 3: Saga Pattern (Distributed Transactions)
 
-```python
-# Saga orchestration for order fulfillment
-from enum import Enum
-from typing import List, Callable
+```java
+// Saga orchestration for order fulfillment
+@FunctionalInterface
+interface SagaAction {
+    StepResult execute(Map<String, Object> context);
+}
 
-class SagaStep:
-    """Single step in saga."""
+@FunctionalInterface
+interface SagaCompensation {
+    void compensate(Map<String, Object> context);
+}
 
-    def __init__(
-        self,
-        name: str,
-        action: Callable,
-        compensation: Callable
-    ):
-        self.name = name
-        self.action = action
-        self.compensation = compensation
+@Data
+@AllArgsConstructor
+class SagaStep {
+    private String name;
+    private SagaAction action;
+    private SagaCompensation compensation;
+}
 
-class SagaStatus(Enum):
-    PENDING = "pending"
-    COMPLETED = "completed"
-    COMPENSATING = "compensating"
-    FAILED = "failed"
+enum SagaStatus {
+    PENDING,
+    COMPLETED,
+    COMPENSATING,
+    FAILED
+}
 
-class OrderFulfillmentSaga:
-    """Orchestrated saga for order fulfillment."""
+@Data
+@Builder
+class SagaResult {
+    private SagaStatus status;
+    private Map<String, Object> data;
+    private String error;
+}
 
-    def __init__(self):
-        self.steps: List[SagaStep] = [
-            SagaStep(
-                "create_order",
-                action=self.create_order,
-                compensation=self.cancel_order
-            ),
-            SagaStep(
-                "reserve_inventory",
-                action=self.reserve_inventory,
-                compensation=self.release_inventory
-            ),
-            SagaStep(
-                "process_payment",
-                action=self.process_payment,
-                compensation=self.refund_payment
-            ),
-            SagaStep(
-                "confirm_order",
-                action=self.confirm_order,
-                compensation=self.cancel_order_confirmation
-            )
-        ]
+@Data
+@Builder
+class StepResult {
+    private boolean success;
+    private Map<String, Object> data;
+    private String error;
+}
 
-    async def execute(self, order_data: dict) -> SagaResult:
-        """Execute saga steps."""
-        completed_steps = []
-        context = {"order_data": order_data}
-
-        try:
-            for step in self.steps:
-                # Execute step
-                result = await step.action(context)
-                if not result.success:
-                    # Compensate
-                    await self.compensate(completed_steps, context)
-                    return SagaResult(
-                        status=SagaStatus.FAILED,
-                        error=result.error
-                    )
-
-                completed_steps.append(step)
-                context.update(result.data)
-
-            return SagaResult(status=SagaStatus.COMPLETED, data=context)
-
-        except Exception as e:
-            # Compensate on error
-            await self.compensate(completed_steps, context)
-            return SagaResult(status=SagaStatus.FAILED, error=str(e))
-
-    async def compensate(self, completed_steps: List[SagaStep], context: dict):
-        """Execute compensating actions in reverse order."""
-        for step in reversed(completed_steps):
-            try:
-                await step.compensation(context)
-            except Exception as e:
-                # Log compensation failure
-                print(f"Compensation failed for {step.name}: {e}")
-
-    # Step implementations
-    async def create_order(self, context: dict) -> StepResult:
-        order = await order_service.create(context["order_data"])
-        return StepResult(success=True, data={"order_id": order.id})
-
-    async def cancel_order(self, context: dict):
-        await order_service.cancel(context["order_id"])
-
-    async def reserve_inventory(self, context: dict) -> StepResult:
-        result = await inventory_service.reserve(
-            context["order_id"],
-            context["order_data"]["items"]
-        )
-        return StepResult(
-            success=result.success,
-            data={"reservation_id": result.reservation_id}
-        )
-
-    async def release_inventory(self, context: dict):
-        await inventory_service.release(context["reservation_id"])
-
-    async def process_payment(self, context: dict) -> StepResult:
-        result = await payment_service.charge(
-            context["order_id"],
-            context["order_data"]["total"]
-        )
-        return StepResult(
-            success=result.success,
-            data={"transaction_id": result.transaction_id},
-            error=result.error
-        )
-
-    async def refund_payment(self, context: dict):
-        await payment_service.refund(context["transaction_id"])
+@Service
+public class OrderFulfillmentSaga {
+    
+    @Autowired
+    private OrderService orderService;
+    
+    @Autowired
+    private InventoryService inventoryService;
+    
+    @Autowired
+    private PaymentService paymentService;
+    
+    private final List<SagaStep> steps;
+    
+    /**
+     * Orchestrated saga for order fulfillment.
+     */
+    public OrderFulfillmentSaga() {
+        this.steps = Arrays.asList(
+            new SagaStep("create_order", this::createOrder, this::cancelOrder),
+            new SagaStep("reserve_inventory", this::reserveInventory, this::releaseInventory),
+            new SagaStep("process_payment", this::processPayment, this::refundPayment),
+            new SagaStep("confirm_order", this::confirmOrder, this::cancelOrderConfirmation)
+        );
+    }
+    
+    /**
+     * Execute saga steps.
+     */
+    public SagaResult execute(OrderRequest orderData) {
+        List<SagaStep> completedSteps = new ArrayList<>();
+        Map<String, Object> context = new HashMap<>();
+        context.put("order_data", orderData);
+        
+        try {
+            for (SagaStep step : steps) {
+                // Execute step
+                StepResult result = step.getAction().execute(context);
+                
+                if (!result.isSuccess()) {
+                    // Compensate
+                    compensate(completedSteps, context);
+                    return SagaResult.builder()
+                        .status(SagaStatus.FAILED)
+                        .error(result.getError())
+                        .build();
+                }
+                
+                completedSteps.add(step);
+                context.putAll(result.getData());
+            }
+            
+            return SagaResult.builder()
+                .status(SagaStatus.COMPLETED)
+                .data(context)
+                .build();
+                
+        } catch (Exception e) {
+            // Compensate on error
+            compensate(completedSteps, context);
+            return SagaResult.builder()
+                .status(SagaStatus.FAILED)
+                .error(e.getMessage())
+                .build();
+        }
+    }
+    
+    /**
+     * Execute compensating actions in reverse order.
+     */
+    private void compensate(List<SagaStep> completedSteps, Map<String, Object> context) {
+        Collections.reverse(completedSteps);
+        for (SagaStep step : completedSteps) {
+            try {
+                step.getCompensation().compensate(context);
+            } catch (Exception e) {
+                // Log compensation failure
+                System.err.println("Compensation failed for " + step.getName() + ": " + e.getMessage());
+            }
+        }
+    }
+    
+    // Step implementations
+    private StepResult createOrder(Map<String, Object> context) {
+        OrderRequest orderData = (OrderRequest) context.get("order_data");
+        Order order = orderService.create(orderData);
+        return StepResult.builder()
+            .success(true)
+            .data(Map.of("order_id", order.getId()))
+            .build();
+    }
+    
+    private void cancelOrder(Map<String, Object> context) {
+        String orderId = (String) context.get("order_id");
+        orderService.cancel(orderId);
+    }
+    
+    private StepResult reserveInventory(Map<String, Object> context) {
+        String orderId = (String) context.get("order_id");
+        OrderRequest orderData = (OrderRequest) context.get("order_data");
+        
+        ReservationResult result = inventoryService.reserve(orderId, orderData.getItems());
+        
+        return StepResult.builder()
+            .success(result.isSuccess())
+            .data(Map.of("reservation_id", result.getReservationId()))
+            .error(result.getError())
+            .build();
+    }
+    
+    private void releaseInventory(Map<String, Object> context) {
+        String reservationId = (String) context.get("reservation_id");
+        inventoryService.release(reservationId);
+    }
+    
+    private StepResult processPayment(Map<String, Object> context) {
+        String orderId = (String) context.get("order_id");
+        OrderRequest orderData = (OrderRequest) context.get("order_data");
+        
+        PaymentResult result = paymentService.charge(orderId, orderData.getTotal());
+        
+        return StepResult.builder()
+            .success(result.isSuccess())
+            .data(Map.of("transaction_id", result.getTransactionId()))
+            .error(result.getError())
+            .build();
+    }
+    
+    private void refundPayment(Map<String, Object> context) {
+        String transactionId = (String) context.get("transaction_id");
+        paymentService.refund(transactionId);
+    }
+    
+    private StepResult confirmOrder(Map<String, Object> context) {
+        String orderId = (String) context.get("order_id");
+        orderService.confirm(orderId);
+        return StepResult.builder()
+            .success(true)
+            .data(Map.of())
+            .build();
+    }
+    
+    private void cancelOrderConfirmation(Map<String, Object> context) {
+        String orderId = (String) context.get("order_id");
+        orderService.cancelConfirmation(orderId);
+    }
+}
 ```
 
 ## Resilience Patterns
 
 ### Circuit Breaker Pattern
 
-```python
-from enum import Enum
-from datetime import datetime, timedelta
-from typing import Callable, Any
+```java
+// Circuit breaker using Resilience4j
+@Configuration
+public class CircuitBreakerConfig {
+    
+    @Bean
+    public CircuitBreakerRegistry circuitBreakerRegistry() {
+        CircuitBreakerConfig config = CircuitBreakerConfig.custom()
+            .failureRateThreshold(50)                    // 50% failure rate
+            .waitDurationInOpenState(Duration.ofSeconds(30))  // Recovery timeout
+            .slidingWindowSize(10)                       // Number of calls to track
+            .minimumNumberOfCalls(5)                     // Minimum calls before calculating rate
+            .permittedNumberOfCallsInHalfOpenState(2)    // Success threshold in half-open
+            .build();
+        
+        return CircuitBreakerRegistry.of(config);
+    }
+    
+    @Bean
+    public CircuitBreaker paymentServiceCircuitBreaker(CircuitBreakerRegistry registry) {
+        return registry.circuitBreaker("paymentService");
+    }
+}
 
-class CircuitState(Enum):
-    CLOSED = "closed"  # Normal operation
-    OPEN = "open"      # Failing, reject requests
-    HALF_OPEN = "half_open"  # Testing if recovered
+@Service
+public class PaymentServiceClient {
+    
+    @Autowired
+    private CircuitBreaker circuitBreaker;
+    
+    @Autowired
+    private RestTemplate restTemplate;
+    
+    /**
+     * Call payment service with circuit breaker protection.
+     */
+    public PaymentResult processPayment(PaymentRequest paymentData) {
+        // Wrap the call with circuit breaker
+        Supplier<PaymentResult> supplier = CircuitBreaker
+            .decorateSupplier(circuitBreaker, () -> callPaymentService(paymentData));
+        
+        try {
+            return supplier.get();
+        } catch (CallNotPermittedException e) {
+            // Circuit breaker is open
+            throw new ServiceUnavailableException("Payment service circuit breaker is open");
+        }
+    }
+    
+    private PaymentResult callPaymentService(PaymentRequest paymentData) {
+        String url = "http://payment-service:8001/payments";
+        ResponseEntity<PaymentResult> response = restTemplate.postForEntity(
+            url, 
+            paymentData, 
+            PaymentResult.class
+        );
+        return response.getBody();
+    }
+}
 
-class CircuitBreaker:
-    """Circuit breaker for service calls."""
+// Alternative: Using annotations
+@Service
+public class OrderService {
+    
+    @Autowired
+    private PaymentServiceClient paymentClient;
+    
+    /**
+     * Process order with circuit breaker using annotation.
+     */
+    @CircuitBreaker(name = "paymentService", fallbackMethod = "paymentFallback")
+    public Order processOrder(OrderRequest orderData) {
+        // Create order
+        Order order = createOrder(orderData);
+        
+        // Process payment (protected by circuit breaker)
+        PaymentResult payment = paymentClient.processPayment(
+            new PaymentRequest(order.getId(), order.getTotal())
+        );
+        
+        if (payment.isSuccess()) {
+            order.setStatus(OrderStatus.CONFIRMED);
+        }
+        
+        return order;
+    }
+    
+    /**
+     * Fallback method when circuit breaker is open.
+     */
+    private Order paymentFallback(OrderRequest orderData, Exception ex) {
+        // Handle fallback logic
+        Order order = createOrder(orderData);
+        order.setStatus(OrderStatus.PENDING_PAYMENT);
+        
+        // Log the failure
+        System.err.println("Payment service unavailable: " + ex.getMessage());
+        
+        return order;
+    }
+}
 
-    def __init__(
-        self,
-        failure_threshold: int = 5,
-        recovery_timeout: int = 30,
-        success_threshold: int = 2
-    ):
-        self.failure_threshold = failure_threshold
-        self.recovery_timeout = recovery_timeout
-        self.success_threshold = success_threshold
-
-        self.failure_count = 0
-        self.success_count = 0
-        self.state = CircuitState.CLOSED
-        self.opened_at = None
-
-    async def call(self, func: Callable, *args, **kwargs) -> Any:
-        """Execute function with circuit breaker."""
-
-        if self.state == CircuitState.OPEN:
-            if self._should_attempt_reset():
-                self.state = CircuitState.HALF_OPEN
-            else:
-                raise CircuitBreakerOpenError("Circuit breaker is open")
-
-        try:
-            result = await func(*args, **kwargs)
-            self._on_success()
-            return result
-
-        except Exception as e:
-            self._on_failure()
-            raise
-
-    def _on_success(self):
-        """Handle successful call."""
-        self.failure_count = 0
-
-        if self.state == CircuitState.HALF_OPEN:
-            self.success_count += 1
-            if self.success_count >= self.success_threshold:
-                self.state = CircuitState.CLOSED
-                self.success_count = 0
-
-    def _on_failure(self):
-        """Handle failed call."""
-        self.failure_count += 1
-
-        if self.failure_count >= self.failure_threshold:
-            self.state = CircuitState.OPEN
-            self.opened_at = datetime.now()
-
-        if self.state == CircuitState.HALF_OPEN:
-            self.state = CircuitState.OPEN
-            self.opened_at = datetime.now()
-
-    def _should_attempt_reset(self) -> bool:
-        """Check if enough time passed to try again."""
-        return (
-            datetime.now() - self.opened_at
-            > timedelta(seconds=self.recovery_timeout)
-        )
-
-# Usage
-breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=30)
-
-async def call_payment_service(payment_data: dict):
-    return await breaker.call(
-        payment_client.process_payment,
-        payment_data
-    )
+// Circuit breaker event monitoring
+@Component
+public class CircuitBreakerEventListener {
+    
+    @Autowired
+    public CircuitBreakerEventListener(CircuitBreakerRegistry registry) {
+        registry.circuitBreaker("paymentService")
+            .getEventPublisher()
+            .onStateTransition(event -> {
+                System.out.println("Circuit breaker state changed: " + 
+                    event.getStateTransition());
+            })
+            .onError(event -> {
+                System.err.println("Circuit breaker recorded error: " + 
+                    event.getThrowable().getMessage());
+            });
+    }
+}
 ```
 
 ## Resources
@@ -558,9 +819,9 @@ async def call_payment_service(payment_data: dict):
 - **references/service-decomposition-guide.md**: Breaking down monoliths
 - **references/communication-patterns.md**: Sync vs async patterns
 - **references/saga-implementation.md**: Distributed transactions
-- **assets/circuit-breaker.py**: Production circuit breaker
-- **assets/event-bus-template.py**: Kafka event bus implementation
-- **assets/api-gateway-template.py**: Complete API gateway
+- **assets/circuit-breaker.java**: Production circuit breaker
+- **assets/event-bus-template.java**: Kafka event bus implementation
+- **assets/api-gateway-template.java**: Complete API gateway
 
 ## Best Practices
 
