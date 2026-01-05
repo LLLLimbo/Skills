@@ -63,399 +63,650 @@ Master proven backend architecture patterns including Clean Architecture, Hexago
 
 ### Directory Structure
 ```
-app/
-├── domain/           # Entities & business rules
-│   ├── entities/
-│   │   ├── user.py
-│   │   └── order.py
-│   ├── value_objects/
-│   │   ├── email.py
-│   │   └── money.py
-│   └── interfaces/   # Abstract interfaces
-│       ├── user_repository.py
-│       └── payment_gateway.py
-├── use_cases/        # Application business rules
-│   ├── create_user.py
-│   ├── process_order.py
-│   └── send_notification.py
-├── adapters/         # Interface implementations
-│   ├── repositories/
-│   │   ├── postgres_user_repository.py
-│   │   └── redis_cache_repository.py
-│   ├── controllers/
-│   │   └── user_controller.py
-│   └── gateways/
-│       ├── stripe_payment_gateway.py
-│       └── sendgrid_email_gateway.py
-└── infrastructure/   # Framework & external concerns
-    ├── database.py
-    ├── config.py
-    └── logging.py
+src/main/java/com/example/
+├── domain/                    # Entities & business rules
+│   ├── entity/
+│   │   ├── User.java
+│   │   └── Order.java
+│   ├── valueobject/
+│   │   ├── Email.java
+│   │   └── Money.java
+│   └── repository/            # Abstract interfaces
+│       ├── UserRepository.java
+│       └── PaymentGateway.java
+├── application/               # Application business rules (Use Cases)
+│   ├── usecase/
+│   │   ├── CreateUserUseCase.java
+│   │   ├── ProcessOrderUseCase.java
+│   │   └── SendNotificationUseCase.java
+│   └── dto/
+│       ├── CreateUserRequest.java
+│       └── CreateUserResponse.java
+├── adapter/                   # Interface implementations
+│   ├── persistence/
+│   │   ├── JpaUserRepository.java
+│   │   └── RedisCacheRepository.java
+│   ├── web/
+│   │   └── UserController.java
+│   └── gateway/
+│       ├── StripePaymentGateway.java
+│       └── SendGridEmailGateway.java
+└── infrastructure/            # Framework & external concerns
+    ├── config/
+    │   ├── DatabaseConfig.java
+    │   └── ApplicationConfig.java
+    └── logging/
+        └── LoggingAspect.java
 ```
 
 ### Implementation Example
 
-```python
-# domain/entities/user.py
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Optional
+```java
+// domain/entity/User.java
+package com.example.domain.entity;
 
-@dataclass
-class User:
-    """Core user entity - no framework dependencies."""
-    id: str
-    email: str
-    name: str
-    created_at: datetime
-    is_active: bool = True
+import java.time.LocalDateTime;
+import java.util.UUID;
 
-    def deactivate(self):
-        """Business rule: deactivating user."""
-        self.is_active = False
+/**
+ * Core user entity - no framework dependencies.
+ */
+public class User {
+    private final String id;
+    private String email;
+    private String name;
+    private final LocalDateTime createdAt;
+    private boolean active;
 
-    def can_place_order(self) -> bool:
-        """Business rule: active users can order."""
-        return self.is_active
+    public User(String id, String email, String name, LocalDateTime createdAt, boolean active) {
+        this.id = id;
+        this.email = email;
+        this.name = name;
+        this.createdAt = createdAt;
+        this.active = active;
+    }
 
-# domain/interfaces/user_repository.py
-from abc import ABC, abstractmethod
-from typing import Optional, List
-from domain.entities.user import User
+    public static User create(String email, String name) {
+        return new User(
+            UUID.randomUUID().toString(),
+            email,
+            name,
+            LocalDateTime.now(),
+            true
+        );
+    }
 
-class IUserRepository(ABC):
-    """Port: defines contract, no implementation."""
+    /** Business rule: deactivating user. */
+    public void deactivate() {
+        this.active = false;
+    }
 
-    @abstractmethod
-    async def find_by_id(self, user_id: str) -> Optional[User]:
-        pass
+    /** Business rule: active users can order. */
+    public boolean canPlaceOrder() {
+        return this.active;
+    }
 
-    @abstractmethod
-    async def find_by_email(self, email: str) -> Optional[User]:
-        pass
+    // Getters
+    public String getId() { return id; }
+    public String getEmail() { return email; }
+    public String getName() { return name; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public boolean isActive() { return active; }
+}
 
-    @abstractmethod
-    async def save(self, user: User) -> User:
-        pass
+// domain/repository/UserRepository.java
+package com.example.domain.repository;
 
-    @abstractmethod
-    async def delete(self, user_id: str) -> bool:
-        pass
+import com.example.domain.entity.User;
+import java.util.Optional;
 
-# use_cases/create_user.py
-from domain.entities.user import User
-from domain.interfaces.user_repository import IUserRepository
-from dataclasses import dataclass
-from datetime import datetime
-import uuid
+/**
+ * Port: defines contract, no implementation.
+ */
+public interface UserRepository {
+    Optional<User> findById(String userId);
+    Optional<User> findByEmail(String email);
+    User save(User user);
+    boolean delete(String userId);
+}
 
-@dataclass
-class CreateUserRequest:
-    email: str
-    name: str
+// application/dto/CreateUserRequest.java
+package com.example.application.dto;
 
-@dataclass
-class CreateUserResponse:
-    user: User
-    success: bool
-    error: Optional[str] = None
+public record CreateUserRequest(String email, String name) {}
 
-class CreateUserUseCase:
-    """Use case: orchestrates business logic."""
+// application/dto/CreateUserResponse.java
+package com.example.application.dto;
 
-    def __init__(self, user_repository: IUserRepository):
-        self.user_repository = user_repository
+import com.example.domain.entity.User;
 
-    async def execute(self, request: CreateUserRequest) -> CreateUserResponse:
-        # Business validation
-        existing = await self.user_repository.find_by_email(request.email)
-        if existing:
-            return CreateUserResponse(
-                user=None,
-                success=False,
-                error="Email already exists"
-            )
+public record CreateUserResponse(User user, boolean success, String error) {
+    public static CreateUserResponse success(User user) {
+        return new CreateUserResponse(user, true, null);
+    }
 
-        # Create entity
-        user = User(
-            id=str(uuid.uuid4()),
-            email=request.email,
-            name=request.name,
-            created_at=datetime.now(),
-            is_active=True
-        )
+    public static CreateUserResponse failure(String error) {
+        return new CreateUserResponse(null, false, error);
+    }
+}
 
-        # Persist
-        saved_user = await self.user_repository.save(user)
+// application/usecase/CreateUserUseCase.java
+package com.example.application.usecase;
 
-        return CreateUserResponse(
-            user=saved_user,
-            success=True
-        )
+import com.example.application.dto.CreateUserRequest;
+import com.example.application.dto.CreateUserResponse;
+import com.example.domain.entity.User;
+import com.example.domain.repository.UserRepository;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-# adapters/repositories/postgres_user_repository.py
-from domain.interfaces.user_repository import IUserRepository
-from domain.entities.user import User
-from typing import Optional
-import asyncpg
+/**
+ * Use case: orchestrates business logic.
+ */
+@Service
+public class CreateUserUseCase {
 
-class PostgresUserRepository(IUserRepository):
-    """Adapter: PostgreSQL implementation."""
+    private final UserRepository userRepository;
 
-    def __init__(self, pool: asyncpg.Pool):
-        self.pool = pool
+    public CreateUserUseCase(UserRepository userRepository) {
+        this.userRepository = userRepository;
+    }
 
-    async def find_by_id(self, user_id: str) -> Optional[User]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM users WHERE id = $1", user_id
-            )
-            return self._to_entity(row) if row else None
+    @Transactional
+    public CreateUserResponse execute(CreateUserRequest request) {
+        // Business validation
+        if (userRepository.findByEmail(request.email()).isPresent()) {
+            return CreateUserResponse.failure("Email already exists");
+        }
 
-    async def find_by_email(self, email: str) -> Optional[User]:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM users WHERE email = $1", email
-            )
-            return self._to_entity(row) if row else None
+        // Create entity
+        User user = User.create(request.email(), request.name());
 
-    async def save(self, user: User) -> User:
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO users (id, email, name, created_at, is_active)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (id) DO UPDATE
-                SET email = $2, name = $3, is_active = $5
-                """,
-                user.id, user.email, user.name, user.created_at, user.is_active
-            )
-            return user
+        // Persist
+        User savedUser = userRepository.save(user);
 
-    async def delete(self, user_id: str) -> bool:
-        async with self.pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM users WHERE id = $1", user_id
-            )
-            return result == "DELETE 1"
+        return CreateUserResponse.success(savedUser);
+    }
+}
 
-    def _to_entity(self, row) -> User:
-        """Map database row to entity."""
-        return User(
-            id=row["id"],
-            email=row["email"],
-            name=row["name"],
-            created_at=row["created_at"],
-            is_active=row["is_active"]
-        )
+// adapter/persistence/JpaUserRepository.java
+package com.example.adapter.persistence;
 
-# adapters/controllers/user_controller.py
-from fastapi import APIRouter, Depends, HTTPException
-from use_cases.create_user import CreateUserUseCase, CreateUserRequest
-from pydantic import BaseModel
+import com.example.domain.entity.User;
+import com.example.domain.repository.UserRepository;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Repository;
 
-router = APIRouter()
+import java.util.Optional;
 
-class CreateUserDTO(BaseModel):
-    email: str
-    name: str
+/**
+ * Adapter: PostgreSQL/JPA implementation.
+ */
+@Repository
+public class JpaUserRepository implements UserRepository {
 
-@router.post("/users")
-async def create_user(
-    dto: CreateUserDTO,
-    use_case: CreateUserUseCase = Depends(get_create_user_use_case)
-):
-    """Controller: handles HTTP concerns only."""
-    request = CreateUserRequest(email=dto.email, name=dto.name)
-    response = await use_case.execute(request)
+    private final JdbcTemplate jdbcTemplate;
 
-    if not response.success:
-        raise HTTPException(status_code=400, detail=response.error)
+    public JpaUserRepository(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
 
-    return {"user": response.user}
+    private final RowMapper<User> userRowMapper = (rs, rowNum) -> new User(
+        rs.getString("id"),
+        rs.getString("email"),
+        rs.getString("name"),
+        rs.getTimestamp("created_at").toLocalDateTime(),
+        rs.getBoolean("is_active")
+    );
+
+    @Override
+    public Optional<User> findById(String userId) {
+        String sql = "SELECT * FROM users WHERE id = ?";
+        return jdbcTemplate.query(sql, userRowMapper, userId)
+            .stream().findFirst();
+    }
+
+    @Override
+    public Optional<User> findByEmail(String email) {
+        String sql = "SELECT * FROM users WHERE email = ?";
+        return jdbcTemplate.query(sql, userRowMapper, email)
+            .stream().findFirst();
+    }
+
+    @Override
+    public User save(User user) {
+        String sql = """
+            INSERT INTO users (id, email, name, created_at, is_active)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE
+            SET email = ?, name = ?, is_active = ?
+            """;
+        jdbcTemplate.update(sql,
+            user.getId(), user.getEmail(), user.getName(),
+            user.getCreatedAt(), user.isActive(),
+            user.getEmail(), user.getName(), user.isActive()
+        );
+        return user;
+    }
+
+    @Override
+    public boolean delete(String userId) {
+        String sql = "DELETE FROM users WHERE id = ?";
+        int rowsAffected = jdbcTemplate.update(sql, userId);
+        return rowsAffected == 1;
+    }
+}
+
+// adapter/web/UserController.java
+package com.example.adapter.web;
+
+import com.example.application.dto.CreateUserRequest;
+import com.example.application.dto.CreateUserResponse;
+import com.example.application.usecase.CreateUserUseCase;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+/**
+ * Controller: handles HTTP concerns only.
+ */
+@RestController
+@RequestMapping("/users")
+public class UserController {
+
+    private final CreateUserUseCase createUserUseCase;
+
+    public UserController(CreateUserUseCase createUserUseCase) {
+        this.createUserUseCase = createUserUseCase;
+    }
+
+    @PostMapping
+    public ResponseEntity<?> createUser(@RequestBody CreateUserRequest request) {
+        CreateUserResponse response = createUserUseCase.execute(request);
+
+        if (!response.success()) {
+            return ResponseEntity.badRequest().body(response.error());
+        }
+
+        return ResponseEntity.ok(response.user());
+    }
+}
 ```
 
 ## Hexagonal Architecture Pattern
 
-```python
-# Core domain (hexagon center)
-class OrderService:
-    """Domain service - no infrastructure dependencies."""
+```java
+// Core domain (hexagon center)
+package com.example.domain.service;
 
-    def __init__(
-        self,
-        order_repository: OrderRepositoryPort,
-        payment_gateway: PaymentGatewayPort,
-        notification_service: NotificationPort
-    ):
-        self.orders = order_repository
-        self.payments = payment_gateway
-        self.notifications = notification_service
+import com.example.domain.entity.Order;
+import com.example.domain.port.OrderRepositoryPort;
+import com.example.domain.port.PaymentGatewayPort;
+import com.example.domain.port.NotificationPort;
+import com.example.domain.valueobject.OrderResult;
+import com.example.domain.valueobject.PaymentResult;
+import org.springframework.stereotype.Service;
 
-    async def place_order(self, order: Order) -> OrderResult:
-        # Business logic
-        if not order.is_valid():
-            return OrderResult(success=False, error="Invalid order")
+/**
+ * Domain service - no infrastructure dependencies.
+ */
+@Service
+public class OrderService {
 
-        # Use ports (interfaces)
-        payment = await self.payments.charge(
-            amount=order.total,
-            customer=order.customer_id
-        )
+    private final OrderRepositoryPort orders;
+    private final PaymentGatewayPort payments;
+    private final NotificationPort notifications;
 
-        if not payment.success:
-            return OrderResult(success=False, error="Payment failed")
+    public OrderService(
+            OrderRepositoryPort orders,
+            PaymentGatewayPort payments,
+            NotificationPort notifications) {
+        this.orders = orders;
+        this.payments = payments;
+        this.notifications = notifications;
+    }
 
-        order.mark_as_paid()
-        saved_order = await self.orders.save(order)
+    public OrderResult placeOrder(Order order) {
+        // Business logic
+        if (!order.isValid()) {
+            return OrderResult.failure("Invalid order");
+        }
 
-        await self.notifications.send(
-            to=order.customer_email,
-            subject="Order confirmed",
-            body=f"Order {order.id} confirmed"
-        )
+        // Use ports (interfaces)
+        PaymentResult payment = payments.charge(
+            order.getTotal(),
+            order.getCustomerId()
+        );
 
-        return OrderResult(success=True, order=saved_order)
+        if (!payment.isSuccess()) {
+            return OrderResult.failure("Payment failed");
+        }
 
-# Ports (interfaces)
-class OrderRepositoryPort(ABC):
-    @abstractmethod
-    async def save(self, order: Order) -> Order:
-        pass
+        order.markAsPaid();
+        Order savedOrder = orders.save(order);
 
-class PaymentGatewayPort(ABC):
-    @abstractmethod
-    async def charge(self, amount: Money, customer: str) -> PaymentResult:
-        pass
+        notifications.send(
+            order.getCustomerEmail(),
+            "Order confirmed",
+            "Order " + order.getId() + " confirmed"
+        );
 
-class NotificationPort(ABC):
-    @abstractmethod
-    async def send(self, to: str, subject: str, body: str):
-        pass
+        return OrderResult.success(savedOrder);
+    }
+}
 
-# Adapters (implementations)
-class StripePaymentAdapter(PaymentGatewayPort):
-    """Primary adapter: connects to Stripe API."""
+// Ports (interfaces)
+package com.example.domain.port;
 
-    def __init__(self, api_key: str):
-        self.stripe = stripe
-        self.stripe.api_key = api_key
+import com.example.domain.entity.Order;
 
-    async def charge(self, amount: Money, customer: str) -> PaymentResult:
-        try:
-            charge = self.stripe.Charge.create(
-                amount=amount.cents,
-                currency=amount.currency,
-                customer=customer
-            )
-            return PaymentResult(success=True, transaction_id=charge.id)
-        except stripe.error.CardError as e:
-            return PaymentResult(success=False, error=str(e))
+public interface OrderRepositoryPort {
+    Order save(Order order);
+    Order findById(String orderId);
+}
 
-class MockPaymentAdapter(PaymentGatewayPort):
-    """Test adapter: no external dependencies."""
+package com.example.domain.port;
 
-    async def charge(self, amount: Money, customer: str) -> PaymentResult:
-        return PaymentResult(success=True, transaction_id="mock-123")
+import com.example.domain.valueobject.Money;
+import com.example.domain.valueobject.PaymentResult;
+
+public interface PaymentGatewayPort {
+    PaymentResult charge(Money amount, String customerId);
+}
+
+package com.example.domain.port;
+
+public interface NotificationPort {
+    void send(String to, String subject, String body);
+}
+
+// Adapters (implementations)
+package com.example.adapter.gateway;
+
+import com.example.domain.port.PaymentGatewayPort;
+import com.example.domain.valueobject.Money;
+import com.example.domain.valueobject.PaymentResult;
+import com.stripe.Stripe;
+import com.stripe.model.Charge;
+import com.stripe.exception.CardException;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Primary adapter: connects to Stripe API.
+ */
+@Component
+public class StripePaymentAdapter implements PaymentGatewayPort {
+
+    public StripePaymentAdapter(@Value("${stripe.api.key}") String apiKey) {
+        Stripe.apiKey = apiKey;
+    }
+
+    @Override
+    public PaymentResult charge(Money amount, String customerId) {
+        try {
+            Map<String, Object> params = new HashMap<>();
+            params.put("amount", amount.getCents());
+            params.put("currency", amount.getCurrency());
+            params.put("customer", customerId);
+
+            Charge charge = Charge.create(params);
+            return PaymentResult.success(charge.getId());
+        } catch (CardException e) {
+            return PaymentResult.failure(e.getMessage());
+        } catch (Exception e) {
+            return PaymentResult.failure("Payment processing error");
+        }
+    }
+}
+
+/**
+ * Test adapter: no external dependencies.
+ */
+@Component
+public class MockPaymentAdapter implements PaymentGatewayPort {
+
+    @Override
+    public PaymentResult charge(Money amount, String customerId) {
+        return PaymentResult.success("mock-123");
+    }
+}
 ```
 
 ## Domain-Driven Design Pattern
 
-```python
-# Value Objects (immutable)
-from dataclasses import dataclass
-from typing import Optional
+```java
+// Value Objects (immutable)
+package com.example.domain.valueobject;
 
-@dataclass(frozen=True)
-class Email:
-    """Value object: validated email."""
-    value: str
+import java.util.Objects;
 
-    def __post_init__(self):
-        if "@" not in self.value:
-            raise ValueError("Invalid email")
+/**
+ * Value object: validated email.
+ */
+public final class Email {
+    private final String value;
 
-@dataclass(frozen=True)
-class Money:
-    """Value object: amount with currency."""
-    amount: int  # cents
-    currency: str
+    public Email(String value) {
+        if (value == null || !value.contains("@")) {
+            throw new IllegalArgumentException("Invalid email");
+        }
+        this.value = value;
+    }
 
-    def add(self, other: "Money") -> "Money":
-        if self.currency != other.currency:
-            raise ValueError("Currency mismatch")
-        return Money(self.amount + other.amount, self.currency)
+    public String getValue() { return value; }
 
-# Entities (with identity)
-class Order:
-    """Entity: has identity, mutable state."""
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Email email = (Email) o;
+        return Objects.equals(value, email.value);
+    }
 
-    def __init__(self, id: str, customer: Customer):
-        self.id = id
-        self.customer = customer
-        self.items: List[OrderItem] = []
-        self.status = OrderStatus.PENDING
-        self._events: List[DomainEvent] = []
+    @Override
+    public int hashCode() { return Objects.hash(value); }
+}
 
-    def add_item(self, product: Product, quantity: int):
-        """Business logic in entity."""
-        item = OrderItem(product, quantity)
-        self.items.append(item)
-        self._events.append(ItemAddedEvent(self.id, item))
+/**
+ * Value object: amount with currency.
+ */
+public final class Money {
+    private final int amount;  // cents
+    private final String currency;
 
-    def total(self) -> Money:
-        """Calculated property."""
-        return sum(item.subtotal() for item in self.items)
+    public Money(int amount, String currency) {
+        this.amount = amount;
+        this.currency = currency;
+    }
 
-    def submit(self):
-        """State transition with business rules."""
-        if not self.items:
-            raise ValueError("Cannot submit empty order")
-        if self.status != OrderStatus.PENDING:
-            raise ValueError("Order already submitted")
+    public Money add(Money other) {
+        if (!this.currency.equals(other.currency)) {
+            throw new IllegalArgumentException("Currency mismatch");
+        }
+        return new Money(this.amount + other.amount, this.currency);
+    }
 
-        self.status = OrderStatus.SUBMITTED
-        self._events.append(OrderSubmittedEvent(self.id))
+    public int getAmount() { return amount; }
+    public int getCents() { return amount; }
+    public String getCurrency() { return currency; }
 
-# Aggregates (consistency boundary)
-class Customer:
-    """Aggregate root: controls access to entities."""
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Money money = (Money) o;
+        return amount == money.amount && Objects.equals(currency, money.currency);
+    }
 
-    def __init__(self, id: str, email: Email):
-        self.id = id
-        self.email = email
-        self._addresses: List[Address] = []
-        self._orders: List[str] = []  # Order IDs, not full objects
+    @Override
+    public int hashCode() { return Objects.hash(amount, currency); }
+}
 
-    def add_address(self, address: Address):
-        """Aggregate enforces invariants."""
-        if len(self._addresses) >= 5:
-            raise ValueError("Maximum 5 addresses allowed")
-        self._addresses.append(address)
+// Entities (with identity)
+package com.example.domain.entity;
 
-    @property
-    def primary_address(self) -> Optional[Address]:
-        return next((a for a in self._addresses if a.is_primary), None)
+import com.example.domain.valueobject.Money;
+import com.example.domain.event.DomainEvent;
+import com.example.domain.event.ItemAddedEvent;
+import com.example.domain.event.OrderSubmittedEvent;
 
-# Domain Events
-@dataclass
-class OrderSubmittedEvent:
-    order_id: str
-    occurred_at: datetime = field(default_factory=datetime.now)
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
-# Repository (aggregate persistence)
-class OrderRepository:
-    """Repository: persist/retrieve aggregates."""
+/**
+ * Entity: has identity, mutable state.
+ */
+public class Order {
+    private final String id;
+    private final Customer customer;
+    private final List<OrderItem> items = new ArrayList<>();
+    private OrderStatus status = OrderStatus.PENDING;
+    private final List<DomainEvent> events = new ArrayList<>();
 
-    async def find_by_id(self, order_id: str) -> Optional[Order]:
-        """Reconstitute aggregate from storage."""
-        pass
+    public Order(String id, Customer customer) {
+        this.id = id;
+        this.customer = customer;
+    }
 
-    async def save(self, order: Order):
-        """Persist aggregate and publish events."""
-        await self._persist(order)
-        await self._publish_events(order._events)
-        order._events.clear()
+    /** Business logic in entity. */
+    public void addItem(Product product, int quantity) {
+        OrderItem item = new OrderItem(product, quantity);
+        items.add(item);
+        events.add(new ItemAddedEvent(this.id, item));
+    }
+
+    /** Calculated property. */
+    public Money getTotal() {
+        return items.stream()
+            .map(OrderItem::getSubtotal)
+            .reduce(new Money(0, "USD"), Money::add);
+    }
+
+    /** State transition with business rules. */
+    public void submit() {
+        if (items.isEmpty()) {
+            throw new IllegalStateException("Cannot submit empty order");
+        }
+        if (status != OrderStatus.PENDING) {
+            throw new IllegalStateException("Order already submitted");
+        }
+
+        this.status = OrderStatus.SUBMITTED;
+        events.add(new OrderSubmittedEvent(this.id));
+    }
+
+    public String getId() { return id; }
+    public Customer getCustomer() { return customer; }
+    public List<OrderItem> getItems() { return Collections.unmodifiableList(items); }
+    public OrderStatus getStatus() { return status; }
+    public List<DomainEvent> getEvents() { return Collections.unmodifiableList(events); }
+    public void clearEvents() { events.clear(); }
+}
+
+// Aggregates (consistency boundary)
+package com.example.domain.entity;
+
+import com.example.domain.valueobject.Email;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * Aggregate root: controls access to entities.
+ */
+public class Customer {
+    private final String id;
+    private final Email email;
+    private final List<Address> addresses = new ArrayList<>();
+    private final List<String> orderIds = new ArrayList<>();  // Order IDs, not full objects
+
+    public Customer(String id, Email email) {
+        this.id = id;
+        this.email = email;
+    }
+
+    /** Aggregate enforces invariants. */
+    public void addAddress(Address address) {
+        if (addresses.size() >= 5) {
+            throw new IllegalStateException("Maximum 5 addresses allowed");
+        }
+        addresses.add(address);
+    }
+
+    public Optional<Address> getPrimaryAddress() {
+        return addresses.stream()
+            .filter(Address::isPrimary)
+            .findFirst();
+    }
+
+    public String getId() { return id; }
+    public Email getEmail() { return email; }
+}
+
+// Domain Events
+package com.example.domain.event;
+
+import java.time.LocalDateTime;
+
+public class OrderSubmittedEvent implements DomainEvent {
+    private final String orderId;
+    private final LocalDateTime occurredAt;
+
+    public OrderSubmittedEvent(String orderId) {
+        this.orderId = orderId;
+        this.occurredAt = LocalDateTime.now();
+    }
+
+    public String getOrderId() { return orderId; }
+    public LocalDateTime getOccurredAt() { return occurredAt; }
+}
+
+// Repository (aggregate persistence)
+package com.example.domain.repository;
+
+import com.example.domain.entity.Order;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+/**
+ * Repository: persist/retrieve aggregates.
+ */
+@Repository
+public class OrderRepository {
+
+    private final JpaOrderRepository jpaRepository;
+    private final ApplicationEventPublisher eventPublisher;
+
+    public OrderRepository(JpaOrderRepository jpaRepository, 
+                          ApplicationEventPublisher eventPublisher) {
+        this.jpaRepository = jpaRepository;
+        this.eventPublisher = eventPublisher;
+    }
+
+    /** Reconstitute aggregate from storage. */
+    public Optional<Order> findById(String orderId) {
+        return jpaRepository.findById(orderId);
+    }
+
+    /** Persist aggregate and publish events. */
+    public Order save(Order order) {
+        Order savedOrder = jpaRepository.save(order);
+        
+        // Publish domain events
+        order.getEvents().forEach(eventPublisher::publishEvent);
+        order.clearEvents();
+        
+        return savedOrder;
+    }
+}
 ```
 
 ## Resources
