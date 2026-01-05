@@ -1,8 +1,9 @@
-## Metadata
-name: Ripgrep User Guide
-description: user guide of ripgrep
+---
+name: ripgrep
+description: A comprehensive guide to using ripgrep, a fast command-line search tool that recursively searches directories for regex patterns with automatic filtering and rich output options. Use when searching codebases, filtering files by type, or performing complex pattern matching across large directory structures.
+---
 
-## Ripgrep
+# Ripgrep
 
 This guide is intended to give an elementary description of ripgrep and an
 overview of its capabilities. This guide assumes that ripgrep is
