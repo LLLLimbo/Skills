@@ -65,6 +65,8 @@ references/arch-unit-maven-plugin.md
 
 ## Resources
 
+> Do not expand the references directory all at once, but rather expand it layer by layer, as needed.
+
 - [Examples](references/archUnit-examples)
 - [ArchUnit GitHub Repository](https://github.com/TNG/ArchUnit)
 - [ArchUnit Documentation](https://www.archunit.org/userguide)
