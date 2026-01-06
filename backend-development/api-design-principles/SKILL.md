@@ -55,7 +55,7 @@ Accept: application/vnd.api+json; version=1
 
 ### Pattern 1: Resource Collection Design
 
-```java
+```plain text
 // Good: Resource-oriented endpoints
 // URI Pattern: /api/v1/<domain>/<subdomain>/<domainobj>
 
