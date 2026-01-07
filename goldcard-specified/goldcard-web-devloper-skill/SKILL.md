@@ -29,6 +29,11 @@ Use these references to implement Gold Card frontend features with the approved 
 - Coding standards: `references/rule/code/index.md` (examples in `references/rule/code/demo1.vue`)
 - Portal design (Identity Center): `references/scheme/identityCenter.md`
 
+## Repositories
+
+- Portal frontend: `http://10.200.1.145/web/platform/portal-front.git` (branch: `dev`)
+- Operations management system frontend: `http://10.200.1.145/web/platform/operations-management-system.git` (branch: `dev`)
+
 ## Usage notes
 
 - Prefer each component's `index.md` for the main API and usage, then consult demo `.vue`/`.js` files for concrete patterns.
