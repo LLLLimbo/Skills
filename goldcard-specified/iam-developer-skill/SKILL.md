@@ -63,11 +63,44 @@ description: 金卡身份中心开发者指引
 - Git 仓库: `http://10.200.6.70/common_components/iam-deploy.git`
 - 开发分支: `CI_dev`
 
+### 其他相关组件
+
+**auth-common**
+
+- 主要作用：该项目创建于身份中心之前, 提供通用认证/鉴权基础能力（操作鉴权 + 数据鉴权），统一注解与拦截器流程，封装会话/用户信息与数据过滤条件，支持多提供方（Eslink/IoT/Mix）的鉴权与用户信息获取。
+- 技术栈：Java 8，Spring Boot 2.1.7，Spring MVC/拦截器，SpEL，Spring Data Redis/多 Redis
+  配置，Maven，多模块工程，Lombok，SLF4J，Hutool，Commons Pool2
+- 相关的服务/组件：
+  - 上游：接入该库的业务服务/控制器（通过 `@OpAuth/@DataAuth/@RequestSessionInfo` 等注解触发鉴权与会话注入）。
+  - 下游：Eslink/IoT 相关的鉴权与用户信息服务（对应 `auth-op-auth-provider-*`、`auth-user-info-provider-*` 中的对外调用实现）。
+  - 基础设施：Redis（多 Redis 配置与集成点）、HTTP 对外调用（用户/权限数据获取）
+
+该项目之所以会和身份中心相关, 是因为身份中心计划替代旧的身份系统(ETBC 和 UTOS), 而 ETBC 以及 UTOS 原先通过 `auth-common` SDK 与其他业务应用产生耦合,
+因此 `auth-common` 需要提供额外的兼容层.
+
+- Git 仓库地址: `http://10.200.1.145/framework/server/auth-common.git`
+- 分支说明: 
+  - `pro`: 生产分支, 暂时和身份中心无关
+  - `feature/iam-eslink-compatible`: 额外提供了身份中心和 ETBC 的兼容层, 暂未合并到生产
+  - `feature/datapermission-field`: 和身份中心无关
+
+
 ## 环境指引
+
+> 仅限公司内网访问
 
 ### 开发环境
 
 - Kubernetes 1.20
-- Nodes: 10.200.6.200,10.200.6.207
-- Kubeconfig: 参考 [kubeconfig-dev.yaml](references/kubeconfig-dev.yaml) 
+- Nodes: `10.200.6.200`,`10.200.6.207`
+- Kubeconfig: 参考 [kubeconfig-dev.yaml](references/kubeconfig-dev.yaml)
+- Namespaces: `iam`
+- Loadbalancer(Caddy): `10.200.6.152`
 
+### 测试环境
+
+- Kubernetes 1.20
+- Nodes: `10.200.6.200`,`10.200.6.207`
+- Kubeconfig: 参考 [kubeconfig-dev.yaml](references/kubeconfig-dev.yaml)
+- Namespaces: `eslink-test`
+- Loadbalancer(Caddy): `10.200.6.152`
