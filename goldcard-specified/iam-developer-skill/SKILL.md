@@ -64,6 +64,16 @@ description: 金卡身份中心开发者指引
 - Git 仓库: `http://10.200.6.70/common_components/iam-deploy.git`
 - 开发分支: `CI_dev`
 
+### iam-migration
+
+一个用于从 ETBC 迁移系统菜单/权限/租户/组织和员工等身份信息到 身份中心的小型应用程序, 涉及复杂的数据映射和转换逻辑,
+具体逻辑可以参考项目根目录下的 `FIELD_MAPPING_CN.md`
+
+详情参考:
+
+- Git 仓库: `http://10.200.6.70/common_components/iam-migration.git`
+- 分支: `master`
+
 ### 其他相关组件
 
 **auth-common**
