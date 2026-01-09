@@ -1,3 +1,0 @@
-dependencies {
-    testImplementation 'com.tngtech.archunit:archunit-junit4:1.4.1'
-}
