@@ -1,6 +1,6 @@
 ---
 name: tdd
-description: "Test-Driven Development workflow with RED-GREEN-REFACTOR, lore from Kent Beck, Michael Feathers, and Ousterhout's counterpoint".
+description: Test-Driven Development workflow with RED-GREEN-REFACTOR, lore from Kent Beck, Michael Feathers, and Ousterhout's counterpoint
 ---
 
 # Test-Driven Development (TDD)
