@@ -21,6 +21,18 @@ Activate this skill when the user:
 - Asks to identify "dead code" or "hidden rules" in a legacy system.
 - Requests a Traceability Matrix for a migration project.
 
+## 0. Guided Intake: SysGraph Data (Optional)
+
+- Ask whether the user wants to generate SysGraph analysis data for this repository.
+- If yes, confirm scope (systems, layers, file types) and delivery (batch JSON file or ingestion API payload).
+- Use the SysGraph batch schema in `packages/shared/src/schemas/batch.schema.json` and the sample payload in `scripts/sample-batch.json`.
+- Read `references/sysgraph-data.md` for mapping rules and naming conventions.
+- Use `scripts/sysgraph_batch_skeleton.py` to scaffold a batch payload when starting from scratch.
+- Use `scripts/validate_sysgraph_batch.py` to sanity-check payloads before delivery.
+- Emit an additional batch payload with `nodes` and `relationships` that reflect recovered requirements and code artifacts.
+- Ensure node ids follow `Type:namespace:name`, labels and relationship types match schema enums, and include `source` metadata (`static_analysis`, `runtime_telemetry`, or `manual`).
+- If the user declines, skip SysGraph output and continue with the requirements report only.
+
 ## 1. Introduction: The Imperative of Requirements Archaeology
 
 In the contemporary landscape of enterprise software engineering, the modernization of legacy systems represents a paradox of value and liability. These systems—often massive, monolithic codebases written in languages such as COBOL, Fortran, C++, or early Java—constitute the operational backbone of global finance, healthcare, government, and logistics. They are the repositories of decades of business logic, regulatory compliance rules, and operational workflows that define the organization's competitive advantage. Yet, they simultaneously represent a significant operational risk. They are frequently characterized by "calcification," where the software has become rigid and fragile due to years of ad-hoc patching, architectural drift, and the departure of the original architects.1
