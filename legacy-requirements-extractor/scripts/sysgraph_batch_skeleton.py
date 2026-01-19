@@ -11,9 +11,15 @@ def iso_timestamp() -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Scaffold a SysGraph batch payload for legacy requirements extraction."
+        description="Scaffold a SysGraph payload (import or batch) for legacy requirements extraction."
     )
     parser.add_argument("--out", help="Write output to a file instead of stdout.")
+    parser.add_argument(
+        "--format",
+        choices=["import", "batch"],
+        default="import",
+        help="Payload format: import for /data/import, batch for /ingestion/batch.",
+    )
     parser.add_argument("--batch-id", dest="batch_id", help="Override batch_id value.")
     parser.add_argument("--analyzer", default="legacy-requirements-extractor")
     parser.add_argument("--version", help="Analyzer version string.")
@@ -37,18 +43,21 @@ def main() -> int:
     if args.repository:
         source["repository"] = args.repository
 
-    payload = {
-        "batch_id": batch_id,
-        "timestamp": timestamp,
-        "source": source,
-        "data": {"nodes": [], "relationships": []},
-        "options": {
-            "merge_strategy": args.merge_strategy,
-            "validate_schema": args.validate_schema,
-            "create_missing_refs": args.create_missing_refs,
-            "dry_run": args.dry_run,
-        },
-    }
+    if args.format == "batch":
+        payload = {
+            "batch_id": batch_id,
+            "timestamp": timestamp,
+            "source": source,
+            "data": {"nodes": [], "relationships": []},
+            "options": {
+                "merge_strategy": args.merge_strategy,
+                "validate_schema": args.validate_schema,
+                "create_missing_refs": args.create_missing_refs,
+                "dry_run": args.dry_run,
+            },
+        }
+    else:
+        payload = {"nodes": [], "relationships": []}
 
     output = json.dumps(payload, indent=2)
     if args.out:

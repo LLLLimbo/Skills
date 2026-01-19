@@ -24,14 +24,22 @@ Activate this skill when the user:
 ## 0. Guided Intake: SysGraph Data (Optional)
 
 - Ask whether the user wants to generate SysGraph analysis data for this repository.
-- If yes, confirm scope (systems, layers, file types) and delivery (batch JSON file or ingestion API payload).
-- Use the SysGraph batch schema in `packages/shared/src/schemas/batch.schema.json` and the sample payload in `scripts/sample-batch.json`.
+- If yes, confirm scope (systems, layers, file types) and delivery (simple import payload for `/data/import` or batch payload for `/ingestion/batch`).
+- Default to the import payload: `{ "nodes": [...], "relationships": [...] }` because it is the simplest to generate and upload.
+- Use the SysGraph batch schema in `packages/shared/src/schemas/batch.schema.json` as the canonical rules; the import payload is just the `data.nodes` + `data.relationships` subset.
 - Read `references/sysgraph-data.md` for mapping rules and naming conventions.
-- Use `scripts/sysgraph_batch_skeleton.py` to scaffold a batch payload when starting from scratch.
-- Use `scripts/validate_sysgraph_batch.py` to sanity-check payloads before delivery.
-- Emit an additional batch payload with `nodes` and `relationships` that reflect recovered requirements and code artifacts.
+- Use `scripts/sysgraph_batch_skeleton.py --format import` (default) to scaffold an import payload; use `--format batch` when ingestion metadata is required.
 - Ensure node ids follow `Type:namespace:name`, labels and relationship types match schema enums, and include `source` metadata (`static_analysis`, `runtime_telemetry`, or `manual`).
 - If the user declines, skip SysGraph output and continue with the requirements report only.
+
+Quick path (import):
+
+```bash
+python scripts/sysgraph_batch_skeleton.py --format import --out sysgraph-import.json
+curl -s -F 'file=@sysgraph-import.json' \
+  -F 'options={"format":"json","merge_strategy":"upsert"}' \
+  http://localhost:4000/api/v1/data/import
+```
 
 ## 1. Introduction: The Imperative of Requirements Archaeology
 

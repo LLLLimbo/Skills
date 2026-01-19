@@ -7,6 +7,14 @@ Use this reference when generating SysGraph analysis payloads from recovered req
 - Schema: `packages/shared/src/schemas/batch.schema.json`
 - Sample payload: `scripts/sample-batch.json`
 
+## Payload formats
+
+- Import (recommended for `/data/import`): root `nodes` and `relationships` arrays (or `data.nodes`/`data.relationships`).
+- Batch (for `/ingestion/batch`): include `batch_id`, `timestamp`, `source`, and `data` wrapper.
+
+The import API ignores batch metadata fields, so put any provenance you care about into
+node/relationship `properties` (for example, `source`, `source_file`, `source_line`).
+
 ## Id format
 
 - Format: `Type:namespace:name`
@@ -44,7 +52,8 @@ EXPOSES, CONSUMES, MAPS_TO, TRIGGERS, RENDERS, SUBMITS_TO, FOREIGN_KEY_TO, DEPLO
 
 ## Minimal payload checklist
 
-- `batch_id`, `timestamp` (ISO 8601 with Z), `source.analyzer`, `data.nodes`, `data.relationships`
+- Import: `nodes`, `relationships` (or `data.nodes`, `data.relationships`)
+- Batch: `batch_id`, `timestamp` (ISO 8601 with Z), `source.analyzer`, `data.nodes`, `data.relationships`
 - Ensure every relationship endpoint exists in `nodes` unless `create_missing_refs` is true.
 
 ## Example snippet

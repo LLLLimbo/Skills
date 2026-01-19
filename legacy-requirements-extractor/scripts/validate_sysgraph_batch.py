@@ -57,9 +57,15 @@ ID_RE = re.compile(r"^[A-Za-z]+:[A-Za-z0-9_./-]+:[A-Za-z0-9_.-]+$")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate a SysGraph batch payload for basic schema alignment."
+        description="Validate a SysGraph import or batch payload for basic schema alignment."
     )
     parser.add_argument("path", help="Path to batch JSON file.")
+    parser.add_argument(
+        "--format",
+        choices=["auto", "batch", "import"],
+        default="auto",
+        help="Payload format: auto-detect, batch, or import.",
+    )
     parser.add_argument(
         "--strict",
         action="store_true",
@@ -95,17 +101,39 @@ def main() -> int:
     payload = load_json(args.path)
     root = ensure_dict(payload, "payload", errors)
 
-    for key in ["batch_id", "timestamp", "source", "data"]:
-        if key not in root:
-            errors.append(f"Missing required field: {key}")
+    format_hint = args.format
+    if format_hint == "auto":
+        if isinstance(root.get("data"), dict):
+            if any(key in root for key in ("batch_id", "timestamp", "source")):
+                format_hint = "batch"
+            else:
+                format_hint = "import"
+        elif "nodes" in root or "relationships" in root:
+            format_hint = "import"
+        else:
+            errors.append("Unable to detect format: expected batch or import structure.")
+            format_hint = "import"
 
-    source = ensure_dict(root.get("source", {}), "source", errors)
-    if "analyzer" not in source or not isinstance(source.get("analyzer"), str):
-        errors.append("source.analyzer must be a string")
+    if format_hint == "batch":
+        for key in ["batch_id", "timestamp", "source", "data"]:
+            if key not in root:
+                errors.append(f"Missing required field: {key}")
 
-    data = ensure_dict(root.get("data", {}), "data", errors)
-    nodes = ensure_list(data.get("nodes", []), "data.nodes", errors)
-    relationships = ensure_list(data.get("relationships", []), "data.relationships", errors)
+        source = ensure_dict(root.get("source", {}), "source", errors)
+        if "analyzer" not in source or not isinstance(source.get("analyzer"), str):
+            errors.append("source.analyzer must be a string")
+
+        data = ensure_dict(root.get("data", {}), "data", errors)
+        nodes = ensure_list(data.get("nodes", []), "data.nodes", errors)
+        relationships = ensure_list(data.get("relationships", []), "data.relationships", errors)
+    else:
+        if isinstance(root.get("data"), dict):
+            data = ensure_dict(root.get("data", {}), "data", errors)
+            nodes = ensure_list(data.get("nodes", []), "data.nodes", errors)
+            relationships = ensure_list(data.get("relationships", []), "data.relationships", errors)
+        else:
+            nodes = ensure_list(root.get("nodes", []), "nodes", errors)
+            relationships = ensure_list(root.get("relationships", []), "relationships", errors)
 
     node_ids: Set[str] = set()
     for idx, node in enumerate(nodes):
@@ -174,7 +202,7 @@ def main() -> int:
         return 1
 
     sys.stdout.write(
-        f"OK: {len(nodes)} nodes, {len(relationships)} relationships validated.\n"
+        f"OK: {len(nodes)} nodes, {len(relationships)} relationships validated (format: {format_hint}).\n"
     )
     return 0
 
