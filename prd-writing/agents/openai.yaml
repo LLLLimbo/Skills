@@ -1,0 +1,4 @@
+interface:
+  display_name: "PRD Writing"
+  short_description: "Draft structured, reusable PRD documents fast"
+  default_prompt: "Use $prd-writing to draft a complete, implementation-ready PRD for this feature."
